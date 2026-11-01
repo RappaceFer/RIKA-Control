@@ -1,17 +1,17 @@
-name: Android APK (demo)
+name: Android APK - pilotage v0.5
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - 'lib/**'
-      - 'pubspec.yaml'
-      - '.github/workflows/android-apk.yml'
+    branches: [main, fix/real-controls-v05]
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -19,15 +19,27 @@ jobs:
           channel: stable
           cache: true
       - name: Generate Android scaffold
-        run: flutter create --platforms android --project-name rika_control .
+        run: |
+          flutter create --platforms android --project-name rika_control .
+          rm -f test/widget_test.dart
       - name: Resolve dependencies
         run: flutter pub get
-      - name: Analyze
-        run: flutter analyze lib
+      - name: Format and analyze
+        run: |
+          dart format lib test
+          flutter analyze lib test
+      - name: Unit and protocol tests - no real stove requests
+        run: flutter test test/firenet_command_test.dart
       - name: Build APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --build-name=0.5.0 --build-number=${{ github.run_number }}
+      - name: Name APK and record build
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-debug.apk dist/RIKA-Control-v0.5.0-debug.apk
+          printf 'Version: 0.5.0\nCommit: %s\nRun: %s\n' "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" > dist/BUILD.txt
+          sha256sum dist/*.apk >> dist/BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: RIKA-Control-demo-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: RIKA-Control-v0.5.0-${{ github.run_number }}-debug
+          path: dist/
           if-no-files-found: error
