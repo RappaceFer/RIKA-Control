@@ -26,6 +26,7 @@ class _RikaHomeState extends State<RikaHome> {
   Map<String, dynamic>? data;
   double preview = 20.1;
   bool previewEdited = false;
+  bool showDiagnostics = false;
 
   @override
   void initState() {
@@ -117,6 +118,10 @@ class _RikaHomeState extends State<RikaHome> {
   Widget build(BuildContext context) {
     final controls = data?['controls'] is Map
       ? data!['controls'] as Map : <String, dynamic>{};
+    final features = data?['stoveFeatures'] is Map ? data!['stoveFeatures'] as Map : <String, dynamic>{};
+    final actualTarget = num.tryParse(controls['targetTemperature']?.toString() ?? '');
+    final modeValue = num.tryParse(controls['operatingMode']?.toString() ?? '');
+    final modeLabel = modeValue == 0 ? 'Manuel' : modeValue == 1 ? 'Automatique' : modeValue == 2 ? 'Confort' : 'Inconnu';
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -153,10 +158,10 @@ class _RikaHomeState extends State<RikaHome> {
                 border: Border.all(color: orange, width: 9),
                 color: const Color(0xFF202124)),
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Text('TEMPÉRATURE CIBLE'),
+                const Text('CONSIGNE PRÉPARÉE'),
                 Text('${preview.toStringAsFixed(1)}°',
                   style: const TextStyle(fontSize: 58, fontWeight: FontWeight.bold)),
-                const Text('Consigne / aperçu local', style: TextStyle(color: orange)),
+                const Text('Aucune commande envoyée', style: TextStyle(color: orange)),
               ]),
             )),
             const SizedBox(height: 20),
@@ -175,23 +180,37 @@ class _RikaHomeState extends State<RikaHome> {
               }),
                 icon: const Icon(Icons.add)),
             ]),
-            const Center(child: Text('Boutons de démonstration : aucun envoi',
-              style: TextStyle(color: Colors.white54, fontSize: 12))),
+            Center(child: Text('Consigne réelle FIRENET : ${actualTarget == null ? '—' : '$actualTarget °C'}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12))),
             const SizedBox(height: 24),
             GridView.count(crossAxisCount: 2, shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.4,
               children: [
                 metric('Puissance demandée', '${controls['heatingPower'] ?? '—'} %', Icons.local_fire_department),
-                metric('Mode (valeur API)', (controls['operatingMode'] ?? '—').toString(), Icons.tune),
+                metric('Mode actuel', modeLabel, Icons.tune),
                 metric('Température poêle (°C)', (() { final raw = num.tryParse(controls['bakeTemperature']?.toString() ?? ''); return raw == null ? '—' : (raw / 10).toStringAsFixed(1); })(), Icons.thermostat),
-                metric('API', data == null ? 'Non lue' : 'OK', Icons.wifi),
+                metric('État du poêle', controls['onOff'] == true ? 'Allumé' : 'Éteint', Icons.power_settings_new),
               ],
             ),
             const SizedBox(height: 20),
-            const Text('Diagnostic JSON FIRENET (développement)', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('MultiAir', style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Card(color: const Color(0xFF202124), child: Column(children: [
+              for (final i in [1, 2]) ListTile(
+                leading: const Icon(Icons.air, color: orange),
+                title: Text('MultiAir $i'),
+                subtitle: Text('Compatible : ${features['multiAir$i'] == true ? 'Oui' : 'Non'} · Niveau : ${controls['convectionFan${i}Level'] ?? '—'}'),
+                trailing: Text(controls['convectionFan${i}Active'] == true ? 'Actif' : 'Inactif'),
+              ),
+            ])),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(onPressed: () => setState(() { showDiagnostics = !showDiagnostics; }),
+              icon: const Icon(Icons.bug_report_outlined),
+              label: Text(showDiagnostics ? 'Masquer les diagnostics' : 'Afficher les diagnostics')),
+            if (showDiagnostics) const Text('Diagnostic JSON FIRENET (développement)', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            SelectableText(data == null ? 'Aucune donnée reçue' :
+            if (showDiagnostics) SelectableText(data == null ? 'Aucune donnée reçue' :
               const JsonEncoder.withIndent('  ').convert(data),
               style: const TextStyle(fontSize: 11, color: Colors.white60)),
             const SizedBox(height: 20),
