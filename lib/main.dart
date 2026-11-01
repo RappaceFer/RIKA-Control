@@ -25,6 +25,7 @@ class _RikaHomeState extends State<RikaHome> {
   String info = 'Connexion FIRENET requise';
   Map<String, dynamic>? data;
   double preview = 20.1;
+  bool previewEdited = false;
 
   @override
   void initState() {
@@ -43,7 +44,8 @@ class _RikaHomeState extends State<RikaHome> {
             busy = false;
             info = 'API FIRENET connectée';
             final t = result['controls']['targetTemperature'];
-            if (t is num) { preview = t.toDouble(); }
+            final parsed = num.tryParse(t?.toString() ?? '');
+            if (parsed != null && !previewEdited) { preview = parsed.toDouble(); }
           });
           }
         } catch (_) {
@@ -159,14 +161,18 @@ class _RikaHomeState extends State<RikaHome> {
             )),
             const SizedBox(height: 20),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              IconButton.filledTonal(onPressed: () => setState(() =>
-                preview = ((preview - 0.1) * 10).round().clamp(50, 350) / 10),
+              IconButton.filledTonal(onPressed: () => setState(() {
+                previewEdited = true;
+                preview = ((preview - 0.1) * 10).round().clamp(50, 350) / 10;
+              }),
                 icon: const Icon(Icons.remove)),
               const SizedBox(width: 28),
               Text('${preview.toStringAsFixed(1)} °C', style: const TextStyle(fontSize: 23)),
               const SizedBox(width: 28),
-              IconButton.filled(onPressed: () => setState(() =>
-                preview = ((preview + 0.1) * 10).round().clamp(50, 350) / 10),
+              IconButton.filled(onPressed: () => setState(() {
+                previewEdited = true;
+                preview = ((preview + 0.1) * 10).round().clamp(50, 350) / 10;
+              }),
                 icon: const Icon(Icons.add)),
             ]),
             const Center(child: Text('Boutons de démonstration : aucun envoi',
@@ -178,12 +184,12 @@ class _RikaHomeState extends State<RikaHome> {
               children: [
                 metric('Puissance demandée', '${controls['heatingPower'] ?? '—'} %', Icons.local_fire_department),
                 metric('Mode (valeur API)', (controls['operatingMode'] ?? '—').toString(), Icons.tune),
-                metric('Température poêle', (controls['bakeTemperature'] ?? '—').toString(), Icons.thermostat),
+                metric('Température poêle (°C)', (() { final raw = num.tryParse(controls['bakeTemperature']?.toString() ?? ''); return raw == null ? '—' : (raw / 10).toStringAsFixed(1); })(), Icons.thermostat),
                 metric('API', data == null ? 'Non lue' : 'OK', Icons.wifi),
               ],
             ),
             const SizedBox(height: 20),
-            const Text('Données JSON FIRENET', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Diagnostic JSON FIRENET (développement)', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             SelectableText(data == null ? 'Aucune donnée reçue' :
               const JsonEncoder.withIndent('  ').convert(data),
