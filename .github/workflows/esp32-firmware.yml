@@ -1,0 +1,33 @@
+name: ESP32-S3 - RIKA Smart demo firmware
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'esp32/rika-smart-thermostat/**'
+      - '.github/workflows/esp32-firmware.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test thermostat logic (no connected stove)
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -I esp32/rika-smart-thermostat/include esp32/rika-smart-thermostat/test/native_logic.cpp -o /tmp/rika_logic_tests
+          /tmp/rika_logic_tests
+      - name: Install PlatformIO
+        run: python3 -m pip install --user platformio
+      - name: Compile demo firmware
+        run: ~/.local/bin/pio run -d esp32/rika-smart-thermostat
+      - name: Upload firmware (DO NOT FLASH before board verification)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RIKA-Smart-ESP32-S3-demo-firmware
+          path: |
+            esp32/rika-smart-thermostat/.pio/build/lilygo_t_display_s3/firmware.bin
+            esp32/rika-smart-thermostat/.pio/build/lilygo_t_display_s3/bootloader.bin
+            esp32/rika-smart-thermostat/.pio/build/lilygo_t_display_s3/partitions.bin
+          if-no-files-found: error
