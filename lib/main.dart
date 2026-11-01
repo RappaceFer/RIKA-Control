@@ -37,31 +37,35 @@ class _RikaHomeState extends State<RikaHome> {
           if (result is! Map || result['controls'] is! Map) {
             throw const FormatException('Réponse inattendue');
           }
-          if (mounted) setState(() {
+          if (mounted) {
+            setState(() {
             data = Map<String, dynamic>.from(result);
             busy = false;
             info = 'API FIRENET connectée';
             final t = result['controls']['targetTemperature'];
-            if (t is num) preview = t.toDouble();
+            if (t is num) { preview = t.toDouble(); }
           });
+          }
         } catch (_) {
-          if (mounted) setState(() {
+          if (mounted) {
+            setState(() {
             busy = false;
             info = 'Lecture impossible : vérifier la session FIRENET';
           });
+          }
         }
       })
       ..setNavigationDelegate(NavigationDelegate(onPageFinished: (_) {
-        if (!login) refresh();
+        if (!login) { refresh(); }
       }))
-      ..loadRequest(Uri.parse('https://www.rika-firenet.com/web/stove/' + stoveId));
+      ..loadRequest(Uri.parse('https://www.rika-firenet.com/web/stove/$stoveId'));
     timer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (!login && !busy) refresh();
+      if (!login && !busy) { refresh(); }
     });
   }
 
   Future<void> refresh() async {
-    if (login || busy) return;
+    if (login || busy) { return; }
     setState(() { busy = true; info = 'Actualisation…'; });
     try {
       await web.runJavaScript(r'''
@@ -78,7 +82,8 @@ class _RikaHomeState extends State<RikaHome> {
         })();
       ''');
     } catch (_) {
-      if (mounted) setState(() {
+      if (mounted) {
+            setState(() {
         busy = false;
         info = 'Session non disponible : reconnecte-toi';
       });
@@ -146,7 +151,7 @@ class _RikaHomeState extends State<RikaHome> {
                 color: const Color(0xFF202124)),
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 const Text('TEMPÉRATURE CIBLE'),
-                Text(preview.toStringAsFixed(1) + '°',
+                Text('${preview.toStringAsFixed(1)}°',
                   style: const TextStyle(fontSize: 58, fontWeight: FontWeight.bold)),
                 const Text('Consigne / aperçu local', style: TextStyle(color: orange)),
               ]),
@@ -157,7 +162,7 @@ class _RikaHomeState extends State<RikaHome> {
                 preview = ((preview - 0.1) * 10).round().clamp(50, 350) / 10),
                 icon: const Icon(Icons.remove)),
               const SizedBox(width: 28),
-              Text(preview.toStringAsFixed(1) + ' °C', style: const TextStyle(fontSize: 23)),
+              Text('${preview.toStringAsFixed(1)} °C', style: const TextStyle(fontSize: 23)),
               const SizedBox(width: 28),
               IconButton.filled(onPressed: () => setState(() =>
                 preview = ((preview + 0.1) * 10).round().clamp(50, 350) / 10),
@@ -170,7 +175,7 @@ class _RikaHomeState extends State<RikaHome> {
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.4,
               children: [
-                metric('Puissance demandée', (controls['heatingPower'] ?? '—').toString() + ' %', Icons.local_fire_department),
+                metric('Puissance demandée', '${controls['heatingPower'] ?? '—'} %', Icons.local_fire_department),
                 metric('Mode (valeur API)', (controls['operatingMode'] ?? '—').toString(), Icons.tune),
                 metric('Température poêle', (controls['bakeTemperature'] ?? '—').toString(), Icons.thermostat),
                 metric('API', data == null ? 'Non lue' : 'OK', Icons.wifi),
