@@ -87,6 +87,7 @@ class _RikaHomeState extends State<RikaHome> {
         busy = false;
         info = 'Session non disponible : reconnecte-toi';
       });
+      }
     }
   }
 
