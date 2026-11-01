@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'firenet_command.dart';
 
 void main() => runApp(const MaterialApp(
   debugShowCheckedModeBanner: false,
@@ -27,6 +28,9 @@ class _RikaHomeState extends State<RikaHome> {
   double preview = 20.1;
   bool previewEdited = false;
   bool showDiagnostics = false;
+  bool commandPending = false;
+  String commandFeedback = 'Aucun test envoyé';
+  DateTime? lastCommand;
 
   @override
   void initState() {
@@ -36,6 +40,17 @@ class _RikaHomeState extends State<RikaHome> {
       ..addJavaScriptChannel('RikaBridge', onMessageReceived: (event) {
         try {
           final result = jsonDecode(event.message);
+          if (result is Map && result['_commandResult'] == true) {
+            if (mounted) {
+              setState(() {
+                commandPending = false;
+                commandFeedback = result['error'] == null
+                    ? 'Serveur contacté. Vérifier la consigne après actualisation.'
+                    : 'Commande refusée : ${result['error']}';
+              });
+            }
+            return;
+          }
           if (result is! Map || result['controls'] is! Map) {
             throw const FormatException('Réponse inattendue');
           }
@@ -90,6 +105,73 @@ class _RikaHomeState extends State<RikaHome> {
         busy = false;
         info = 'Session non disponible : reconnecte-toi';
       });
+      }
+    }
+  }
+
+
+  Future<void> testTemperature() async {
+    if (login || busy || commandPending || data == null) { return; }
+    if (lastCommand != null &&
+        DateTime.now().difference(lastCommand!) < const Duration(seconds: 60)) {
+      setState(() { commandFeedback = 'Attends 60 secondes avant un autre essai.'; });
+      return;
+    }
+    final controls = data!['controls'];
+    if (controls is! Map) { return; }
+    late final String body;
+    try {
+      body = FirenetCommand.jsonBody(FirenetCommand.targetTemperature(
+        Map<String, dynamic>.from(controls), preview.toStringAsFixed(1)));
+    } catch (e) {
+      setState(() { commandFeedback = e.toString(); });
+      return;
+    }
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Test de consigne FIRENET'),
+        content: Text('Envoyer ${preview.toStringAsFixed(1)} °C ? '
+            'La valeur peut être refusée ou arrondie. '
+            'Ce test agit potentiellement sur le chauffage. '
+            'Vérifie que le poêle est en mode Confort, sans alarme.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Confirmer l’envoi')),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) { return; }
+    setState(() {
+      commandPending = true;
+      commandFeedback = 'Envoi de la consigne…';
+      lastCommand = DateTime.now();
+    });
+    try {
+      await web.runJavaScript('''
+        (async function() {
+          try {
+            const response = await fetch('/api/client/46342494/controls', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {'Content-Type':'application/json', 'Accept':'application/json'},
+              body: ${jsonEncode(body)}
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            RikaBridge.postMessage(JSON.stringify({_commandResult:true}));
+          } catch(e) {
+            RikaBridge.postMessage(JSON.stringify({_commandResult:true,error:String(e)}));
+          }
+        })();
+      ''');
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          commandPending = false;
+          commandFeedback = 'Impossible d’envoyer la requête';
+        });
       }
     }
   }
@@ -182,6 +264,17 @@ class _RikaHomeState extends State<RikaHome> {
             ]),
             Center(child: Text('Consigne réelle FIRENET : ${actualTarget == null ? '—' : '$actualTarget °C'}',
               style: const TextStyle(color: Colors.white70, fontSize: 12))),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: (commandPending || busy || data == null || modeValue != 2)
+                  ? null : testTemperature,
+              icon: const Icon(Icons.send),
+              label: const Text('Tester la consigne sur le poêle'),
+            ),
+            Text(commandFeedback, style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 6),
+            const Text('Commande expérimentale : comparer ensuite la valeur FIRENET et l’écran du poêle. Marche/arrêt non activé.',
+              style: TextStyle(color: Colors.white60, fontSize: 12)),
             const SizedBox(height: 24),
             GridView.count(crossAxisCount: 2, shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
