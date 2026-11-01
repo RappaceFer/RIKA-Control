@@ -1,4 +1,4 @@
-name: Android APK - pilotage v0.5
+name: Android APK - planning v0.6
 on:
   workflow_dispatch:
   push:
@@ -28,18 +28,20 @@ jobs:
         run: |
           dart format lib test
           flutter analyze lib test
-      - name: Unit and protocol tests - no real stove requests
-        run: flutter test test/firenet_command_test.dart
+      - name: JavaScript bridge mock tests
+        run: node --test tools/bridge_test.mjs
+      - name: Unit and widget tests - no real stove requests
+        run: flutter test
       - name: Build APK
-        run: flutter build apk --debug --build-name=0.5.0 --build-number=${{ github.run_number }}
+        run: flutter build apk --debug --build-name=0.6.0 --build-number=${{ github.run_number }}
       - name: Name APK and record build
         run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-debug.apk dist/RIKA-Control-v0.5.0-debug.apk
-          printf 'Version: 0.5.0\nCommit: %s\nRun: %s\n' "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" > dist/BUILD.txt
+          cp build/app/outputs/flutter-apk/app-debug.apk dist/RIKA-Control-v0.6.0-debug.apk
+          printf 'Version: 0.6.0\nCommit: %s\nRun: %s\n' "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" > dist/BUILD.txt
           sha256sum dist/*.apk >> dist/BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: RIKA-Control-v0.5.0-${{ github.run_number }}-debug
+          name: RIKA-Control-v0.6.0-${{ github.run_number }}-debug
           path: dist/
           if-no-files-found: error

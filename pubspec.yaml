@@ -1,13 +1,14 @@
 name: rika_control
 description: Independent FIRENET client with explicit user-confirmed controls
 publish_to: none
-version: 0.5.0+5
+version: 0.6.0+6
 environment:
   sdk: '>=3.3.0 <4.0.0'
 dependencies:
   flutter:
     sdk: flutter
   webview_flutter: ^4.10.0
+  path_provider: ^2.1.5
 dev_dependencies:
   flutter_test:
     sdk: flutter

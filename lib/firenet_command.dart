@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'weekly_schedule.dart';
 
 num? number(Object? value) => value is num ? value : num.tryParse('$value');
 Map<String, dynamic> objectMap(Object? value) => value is Map
@@ -9,6 +10,11 @@ class FirenetException implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+class FirenetRateLimit extends FirenetException {
+  const FirenetRateLimit(this.seconds) : super('FIRENET limite les requêtes. Pause réseau, aucun renvoi automatique.');
+  final int seconds;
 }
 
 class StoveSnapshot {
@@ -45,8 +51,7 @@ class StoveSnapshot {
   }
 }
 
-/// A patch is a user-approved change, never a complete cached payload.
-/// The full payload is rebuilt from a fresh status response just before POST.
+/// User-approved changes; the payload is rebuilt from fresh status before POST.
 class FirenetCommand {
   static Map<String, Object> temperature(double value, {required bool comfort}) {
     if (!value.isFinite || value < 14 || value > 28) {
@@ -57,20 +62,15 @@ class FirenetCommand {
       if (comfort) 'operatingMode': 2,
     };
   }
-
   static bool equal(Object? a, Object? b) {
     if (a is bool || b is bool) { return a == b; }
-    final x = number(a);
-    final y = number(b);
+    final x = number(a), y = number(b);
     return x != null && y != null ? (x - y).abs() < 0.00001 : a == b;
   }
-
   static bool matches(StoveSnapshot state, Map<String, Object> patch) =>
       patch.entries.every((e) => equal(state.controls[e.key], e.value));
 
-  static Map<String, dynamic> prepare(
-    StoveSnapshot state, Map<String, Object> patch,
-  ) {
+  static Map<String, dynamic> prepare(StoveSnapshot state, Map<String, Object> patch) {
     if (patch.isEmpty || state.revision == null || state.revision! <= 0) {
       throw const FirenetException('Contrôles ou révision FIRENET manquants.');
     }
@@ -79,8 +79,7 @@ class FirenetCommand {
     }
     final stopOnly = patch.length == 1 && patch['onOff'] == false;
     if (!stopOnly) {
-      if (number(state.sensors['statusError']) != 0 ||
-          number(state.sensors['statusWarning']) != 0) {
+      if (number(state.sensors['statusError']) != 0 || number(state.sensors['statusWarning']) != 0) {
         throw const FirenetException('Alarme, avertissement ou diagnostic inconnu : vérifier le poêle.');
       }
       if (state.acknowledged == null || state.acknowledged != state.revision) {
@@ -91,75 +90,80 @@ class FirenetCommand {
     for (final entry in patch.entries) {
       final key = entry.key;
       final value = entry.value;
-      if (!result.containsKey(key)) {
-        throw FirenetException('Fonction absente sur ce poêle : $key.');
-      }
+      if (!result.containsKey(key)) { throw FirenetException('Fonction absente sur ce poêle : $key.'); }
       if (key == 'onOff') {
         if (value is! bool) { throw const FirenetException('Marche/arrêt invalide.'); }
       } else if (key == 'operatingMode') {
-        if (value is! int || ![0, 1, 2].contains(value)) {
-          throw const FirenetException('Mode invalide.');
+        if (value is! int || ![0, 1, 2].contains(value)) { throw const FirenetException('Mode invalide.'); }
+        if (value == 2 && state.room == null) {
+          throw const FirenetException('Mode Confort indisponible : vérifier la sonde ambiante.');
+        }
+      } else if (RegExp(r'^heatingTime(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[12]$').hasMatch(key)) {
+        try { HeatingSlot.decode(value); }
+        on FormatException { throw const FirenetException('Plage horaire invalide.'); }
+      } else if (key == 'heatingTimesActiveForComfort') {
+        if (value is! bool) { throw const FirenetException('Activation du planning invalide.'); }
+      } else if (key == 'setBackTemperature') {
+        final n = number(value);
+        if (n == null || !n.isFinite || n < 14 || n > 28 || n % 1 != 0) {
+          throw const FirenetException('Température réduite autorisée : 14 à 28 °C, pas de 1 °C.');
+        }
+        final target = number(patch['targetTemperature'] ?? result['targetTemperature']);
+        if (target != null && n > target) {
+          throw const FirenetException('La température réduite doit être inférieure ou égale à la consigne Confort.');
         }
       } else if (key == 'targetTemperature') {
         final n = number(value);
-        if (n == null || !n.isFinite || n < 14 || n > 28) {
-          throw const FirenetException('Consigne hors plage 14–28 °C.');
-        }
+        if (n == null || !n.isFinite || n < 14 || n > 28) { throw const FirenetException('Consigne hors plage 14–28 °C.'); }
         if (number(patch['operatingMode'] ?? result['operatingMode']) != 2) {
           throw const FirenetException('Sélectionner Confort pour utiliser une consigne.');
         }
-        if (state.room == null) {
-          throw const FirenetException('Température ambiante indisponible : vérifier la sonde.');
-        }
+        if (state.room == null) { throw const FirenetException('Température ambiante indisponible : vérifier la sonde.'); }
       } else if (key == 'heatingPower') {
-        if (value is! int || value < 30 || value > 100) {
-          throw const FirenetException('Puissance autorisée : 30–100 %.');
-        }
+        if (value is! int || value < 30 || value > 100) { throw const FirenetException('Puissance autorisée : 30–100 %.'); }
       } else if (key == 'convectionFan1Active' || key == 'convectionFan2Active') {
         final index = key == 'convectionFan1Active' ? 1 : 2;
-        if (value is! bool || state.features['multiAir$index'] != true) {
-          throw const FirenetException('Circuit MultiAir indisponible.');
-        }
-      } else {
-        throw FirenetException('Modification interdite : $key.');
-      }
+        if (value is! bool || state.features['multiAir$index'] != true) { throw const FirenetException('Circuit MultiAir indisponible.'); }
+      } else { throw FirenetException('Modification interdite : $key.'); }
       result[key] = value;
     }
-    // Preserve revision, schedules, frost protection, unknown controls and types.
+    if (patch.keys.any((key) => RegExp(r'^heatingTime(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[12]$').hasMatch(key))) {
+      for (final day in weekCodes) {
+        for (var n = 1; n <= 2; n++) {
+          if (!patch.containsKey('heatingTime$day$n')) {
+            throw const FirenetException('Le planning doit être transmis en une seule opération complète.');
+          }
+        }
+      }
+      try { WeeklySchedule.fromControls(result).validate(); }
+      on FormatException catch (e) { throw FirenetException(e.message); }
+    }
+    // Preserve revision, frost protection, unknown controls and their types.
     // No sensor, combustion tuning or reset endpoint is writable here.
     return result;
   }
 }
 
 class ApiReply {
-  const ApiReply(this.status, this.body);
+  const ApiReply(this.status, this.body, {this.retryAfter});
+  final int? retryAfter;
   final int status;
   final String body;
 }
-typedef ApiRequest = Future<ApiReply> Function(
-  String path, String method, Map<String, dynamic>? body,
-);
-
+typedef ApiRequest = Future<ApiReply> Function(String path, String method, Map<String, dynamic>? body);
 enum Confirmation { waiting, stored, confirmed, different, unchanged }
 
 class CommandReceipt {
-  CommandReceipt({required this.patch, required this.before,
-    required this.accepted, this.noChange = false}) : sentAt = DateTime.now();
+  CommandReceipt({required this.patch, required this.before, required this.accepted, this.noChange = false}) : sentAt = DateTime.now();
   final Map<String, Object> patch;
   final StoveSnapshot before;
-  final bool accepted;
-  final bool noChange;
+  final bool accepted, noChange;
   final DateTime sentAt;
-
   Confirmation inspect(StoveSnapshot latest) {
     final same = FirenetCommand.matches(latest, patch);
-    if (noChange && same && latest.acknowledged == latest.revision) {
-      return Confirmation.unchanged;
-    }
-    final advanced = latest.revision != null && before.revision != null &&
-        latest.revision! > before.revision!;
-    final ack = advanced && latest.acknowledged != null &&
-        latest.acknowledged! >= latest.revision!;
+    if (noChange && same && latest.acknowledged == latest.revision) { return Confirmation.unchanged; }
+    final advanced = latest.revision != null && before.revision != null && latest.revision! > before.revision!;
+    final ack = advanced && latest.acknowledged != null && latest.acknowledged! >= latest.revision!;
     if (ack) { return same ? Confirmation.confirmed : Confirmation.different; }
     if (advanced && same) { return Confirmation.stored; }
     return Confirmation.waiting;
@@ -168,36 +172,30 @@ class CommandReceipt {
 
 class FirenetClient {
   FirenetClient(this.request, this.stoveId) {
-    if (!RegExp(r'^[0-9]+$').hasMatch(stoveId)) {
-      throw const FirenetException('Identifiant du poêle invalide.');
-    }
+    if (!RegExp(r'^[0-9]+$').hasMatch(stoveId)) { throw const FirenetException('Identifiant du poêle invalide.'); }
   }
   final ApiRequest request;
   final String stoveId;
-
   void _check(ApiReply reply) {
-    if (reply.status == 401 || reply.status == 403 ||
-        reply.body.trimLeft().startsWith('<')) {
+    if (reply.status == 429) { throw FirenetRateLimit((reply.retryAfter ?? 60).clamp(5, 3600).toInt()); }
+    if (reply.status == 401 || reply.status == 403 || reply.body.trimLeft().startsWith('<')) {
       throw const FirenetException('Session expirée : ouvrir Compte FIRENET et se reconnecter.');
     }
     if (reply.status < 200 || reply.status >= 300) {
       throw FirenetException('FIRENET répond HTTP ${reply.status}. Pas de renvoi automatique.');
     }
   }
-
   Future<StoveSnapshot> read() async {
     final response = await request('/api/client/$stoveId/status?nocache=${DateTime.now().millisecondsSinceEpoch}', 'GET', null);
     _check(response);
     final dynamic decoded;
     try { decoded = jsonDecode(response.body); }
     catch (_) { throw const FirenetException('Réponse FIRENET non JSON. Reconnecter le compte.'); }
-    if (decoded is! Map || decoded['controls'] is! Map || decoded['sensors'] is! Map ||
-        decoded['stoveID']?.toString() != stoveId) {
+    if (decoded is! Map || decoded['controls'] is! Map || decoded['sensors'] is! Map || decoded['stoveID']?.toString() != stoveId) {
       throw const FirenetException('État du poêle incomplet ou identifiant incohérent.');
     }
     return StoveSnapshot(Map<String, dynamic>.from(decoded));
   }
-
   Future<CommandReceipt> send(Map<String, Object> patch) async {
     final fresh = await read();
     final payload = FirenetCommand.prepare(fresh, patch);
@@ -214,8 +212,7 @@ class FirenetClient {
         if (result is Map && (result['error'] != null || result['success'] == false)) {
           throw const FirenetException('FIRENET a refusé la commande. Vérifier le poêle et actualiser.');
         }
-        accepted = result == 'OK' || (result is Map &&
-            (result['success'] == true || result['status'] == 'OK'));
+        accepted = result == 'OK' || (result is Map && (result['success'] == true || result['status'] == 'OK'));
       } on FormatException {
         throw const FirenetException('Réponse FIRENET inattendue. Envoi non confirmé ; actualiser avant un autre essai.');
       }
